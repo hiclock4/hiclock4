@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PHOTO BOOTH WITH HAWK</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: #fff0f2;
+    font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    overflow-x: hidden;
+  }
+
+  /* ---------- 인트로 (전체화면) ---------- */
+  #screen-intro {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+  }
+  #screen-intro.active { display: block; }
+  #screen-intro .bg {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+  }
+  .btn-intro {
+    position: absolute;
+    left: 50%;
+    bottom: 7%;
+    transform: translateX(-50%);
+    background: #fff;
+    color: #993556;
+    border: none;
+    border-radius: 18px;
+    padding: 15px 46px;
+    font-size: 17px;
+    font-weight: 700;
+    box-shadow: 0 4px 16px rgba(153, 53, 86, 0.28);
+  }
+
+  /* ---------- 촬영 / 결과 (센터 카드) ---------- */
+  #app {
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 12px;
+    gap: 14px;
+  }
+  .screen { display: none; width: 100%; flex-direction: column; align-items: center; gap: 14px; }
+  .screen.active { display: flex; }
+
+  .stage {
+    position: relative;
+    width: 100%;
+    max-width: 380px;
+    overflow: hidden;
+    border-radius: 18px;
+    background: #f7d7dd;
+  }
+  .stage-cam { aspect-ratio: 720 / 1060; }
+  .stage-frame { aspect-ratio: 480 / 1460; max-width: 300px; }
+
+  .stage img, .stage video, .stage canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  #video { transform: scaleX(-1); background: #000; }
+
+  /* SHOT_frame 이미지 상단 26/1060(≈2.45%) 구간이 투명 여백이라
+     그 부분만 카메라가 그대로 비쳐 보이는 문제를 흰색으로 덮어 막음 */
+  .cam-top-mask {
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 2.5%;
+    background: #fff;
+  }
+
+  .dots { display: flex; gap: 8px; }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #f2b9c6;
+    border: 1px solid #e88aa4;
+    transition: background 0.2s;
+  }
+  .dot.filled { background: #e2537e; }
+
+  .countdown {
+    position: absolute; inset: 0;
+    display: none; align-items: center; justify-content: center;
+    font-size: 72px; font-weight: 500; color: #fff;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.35);
+    background: rgba(0,0,0,0.12);
+    pointer-events: none;
+  }
+  .flash {
+    position: absolute; inset: 0; background: #fff;
+    opacity: 0; pointer-events: none;
+  }
+  .flash.on { opacity: 0.85; transition: opacity 0.05s; }
+  .flash.off { opacity: 0; transition: opacity 0.35s; }
+
+  .btn-main, .btn-secondary {
+    border: none;
+    border-radius: 999px;
+    padding: 13px 34px;
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .btn-main { background: #fff; color: #993556; box-shadow: 0 2px 6px rgba(153,53,86,0.18); }
+  .btn-secondary { background: transparent; color: #993556; border: 1px solid #e2537e; }
+  .result-actions { display: flex; gap: 10px; }
+
+  .hint { font-size: 12px; color: #a6647a; text-align: center; }
+</style>
+</head>
+<body>
+
+<!-- 인트로 화면 (전체화면) -->
+<section id="screen-intro" class="active">
+  <img class="bg" src="MAIN.png" alt="PHOTO BOOTH WITH HAWK">
+  <button id="btn-start" class="btn-intro">시작하기</button>
+</section>
+
+<div id="app">
+
+  <!-- 촬영 화면 -->
+  <section id="screen-cam" class="screen">
+    <div class="stage stage-cam" id="cam-stage">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="cam-top-mask"></div>
+      <img id="cam-frame-img" src="SHOT_frame_01.png" alt="" style="pointer-events:none;">
+      <div class="countdown" id="countdown"></div>
+      <div class="flash" id="flash"></div>
+    </div>
+    <div class="dots" id="dots">
+      <span class="dot" data-i="0"></span>
+      <span class="dot" data-i="1"></span>
+      <span class="dot" data-i="2"></span>
+      <span class="dot" data-i="3"></span>
+    </div>
+    <button id="btn-shutter" class="btn-main">촬영하기</button>
+    <p class="hint" id="cam-hint">버튼을 누르면 3초 뒤 4컷이 순서대로 촬영돼요</p>
+  </section>
+
+  <!-- 결과 화면 -->
+  <section id="screen-result" class="screen">
+    <div class="stage stage-frame">
+      <canvas id="result-canvas" width="480" height="1460"></canvas>
+    </div>
+    <div class="result-actions">
+      <button id="btn-retake" class="btn-secondary">다시 찍기</button>
+      <button id="btn-save" class="btn-main">저장하기</button>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function(){
+  // ---- 좌표 상수 (이미지 분석값 그대로) ----
+  var CAM_SIZE = { w: 720, h: 1060 };
+  var CAM_FRAMES = [
+    { file: 'SHOT_frame_01.png', hole: { x: 44, y: 315, w: 645, h: 515 } },
+    { file: 'SHOT_frame_02.png', hole: { x: 31, y: 320, w: 646, h: 511 } },
+    { file: 'SHOT_frame_03.png', hole: { x: 40, y: 328, w: 613, h: 489 } },
+    { file: 'SHOT_frame_04.png', hole: { x: 55, y: 321, w: 622, h: 510 } }
+  ];
+
+  var RESULT_SIZE = { w: 480, h: 1460 };
+  var RESULT_HOLES = [
+    { x: 91, y: 44,  w: 363, h: 291 },
+    { x: 50, y: 359, w: 363, h: 292 },
+    { x: 99, y: 675, w: 363, h: 293 },
+    { x: 14, y: 995, w: 363, h: 293 }
+  ];
+
+  var video = document.getElementById('video');
+  var camFrameImg = document.getElementById('cam-frame-img');
+  var countdownEl = document.getElementById('countdown');
+  var flashEl = document.getElementById('flash');
+  var dots = document.querySelectorAll('.dot');
+  var camHint = document.getElementById('cam-hint');
+  var resultCanvas = document.getElementById('result-canvas');
+
+  var shots = [];
+  var shooting = false;
+  var stream = null;
+
+  var resultFrameImg = new Image();
+  resultFrameImg.src = 'FRAME.png';
+
+  function showIntro(show){
+    document.getElementById('screen-intro').classList.toggle('active', show);
+  }
+  function showScreen(name){
+    showIntro(false);
+    document.querySelectorAll('#app .screen').forEach(function(s){ s.classList.remove('active'); });
+    document.getElementById('screen-' + name).classList.add('active');
+  }
+
+  // object-fit: cover 를 캔버스에 그대로 재현
+  function drawCover(ctx, source, sw, sh, dx, dy, dw, dh){
+    var srcRatio = sw / sh;
+    var dstRatio = dw / dh;
+    var sx, sy, sWidth, sHeight;
+    if (srcRatio > dstRatio) {
+      sHeight = sh;
+      sWidth = sh * dstRatio;
+      sx = (sw - sWidth) / 2;
+      sy = 0;
+    } else {
+      sWidth = sw;
+      sHeight = sw / dstRatio;
+      sx = 0;
+      sy = (sh - sHeight) / 2;
+    }
+    ctx.drawImage(source, sx, sy, sWidth, sHeight, dx, dy, dw, dh);
+  }
+
+  function startCamera(){
+    if (stream) return Promise.resolve();
+    return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false })
+      .then(function(s){
+        stream = s;
+        video.srcObject = s;
+        return video.play();
+      })
+      .catch(function(err){
+        camHint.textContent = '카메라를 사용할 수 없어요. 브라우저 카메라 권한을 확인해주세요.';
+        console.error(err);
+      });
+  }
+
+  function updateDots(){
+    dots.forEach(function(d, i){
+      d.classList.toggle('filled', i < shots.length);
+    });
+  }
+
+  function flash(){
+    flashEl.classList.remove('off');
+    flashEl.classList.add('on');
+    setTimeout(function(){
+      flashEl.classList.remove('on');
+      flashEl.classList.add('off');
+    }, 60);
+  }
+
+  function captureShot(idx){
+    var hole = CAM_FRAMES[idx].hole;
+    var tmp = document.createElement('canvas');
+    tmp.width = CAM_SIZE.w;
+    tmp.height = CAM_SIZE.h;
+    var tctx = tmp.getContext('2d');
+    tctx.save();
+    tctx.translate(CAM_SIZE.w, 0);
+    tctx.scale(-1, 1); // 셀피 미러링
+    if (video.videoWidth) {
+      drawCover(tctx, video, video.videoWidth, video.videoHeight, 0, 0, CAM_SIZE.w, CAM_SIZE.h);
+    }
+    tctx.restore();
+
+    var shotCanvas = document.createElement('canvas');
+    shotCanvas.width = hole.w;
+    shotCanvas.height = hole.h;
+    shotCanvas.getContext('2d').drawImage(
+      tmp, hole.x, hole.y, hole.w, hole.h, 0, 0, hole.w, hole.h
+    );
+    shots.push(shotCanvas);
+    updateDots();
+  }
+
+  function countdownAndCapture(idx){
+    return new Promise(function(resolve){
+      camFrameImg.src = CAM_FRAMES[idx].file;
+      var n = 3;
+      countdownEl.style.display = 'flex';
+      countdownEl.textContent = n;
+      var timer = setInterval(function(){
+        n--;
+        if (n > 0) {
+          countdownEl.textContent = n;
+        } else {
+          clearInterval(timer);
+          countdownEl.style.display = 'none';
+          flash();
+          captureShot(idx);
+          resolve();
+        }
+      }, 800);
+    });
+  }
+
+  function startSequence(){
+    if (shooting) return;
+    shooting = true;
+    shots = [];
+    updateDots();
+    camHint.textContent = '';
+
+    var chain = Promise.resolve();
+    CAM_FRAMES.forEach(function(_, idx){
+      chain = chain.then(function(){ return countdownAndCapture(idx); });
+    });
+    chain.then(function(){
+      shooting = false;
+      renderResult();
+      showScreen('result');
+    });
+  }
+
+  function renderResult(){
+    resultCanvas.width = RESULT_SIZE.w;
+    resultCanvas.height = RESULT_SIZE.h;
+    var ctx = resultCanvas.getContext('2d');
+    ctx.clearRect(0, 0, RESULT_SIZE.w, RESULT_SIZE.h);
+
+    shots.forEach(function(shotCanvas, i){
+      var hole = RESULT_HOLES[i];
+      if (!hole) return;
+      drawCover(ctx, shotCanvas, shotCanvas.width, shotCanvas.height, hole.x, hole.y, hole.w, hole.h);
+    });
+
+    function drawFrame(){
+      ctx.drawImage(resultFrameImg, 0, 0, RESULT_SIZE.w, RESULT_SIZE.h);
+    }
+    if (resultFrameImg.complete && resultFrameImg.naturalWidth) {
+      drawFrame();
+    } else {
+      resultFrameImg.onload = drawFrame;
+    }
+  }
+
+  function saveResult(){
+    resultCanvas.toBlob(function(blob){
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'photobooth_with_hawk.png';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+    }, 'image/png');
+  }
+
+  document.getElementById('btn-start').addEventListener('click', function(){
+    showScreen('cam');
+    startCamera();
+  });
+
+  document.getElementById('btn-shutter').addEventListener('click', startSequence);
+
+  document.getElementById('btn-retake').addEventListener('click', function(){
+    shots = [];
+    updateDots();
+    camFrameImg.src = CAM_FRAMES[0].file;
+    camHint.textContent = '버튼을 누르면 3초 뒤 4컷이 순서대로 촬영돼요';
+    showScreen('cam');
+  });
+
+  document.getElementById('btn-save').addEventListener('click', saveResult);
+
+})();
+</script>
+</body>
+</html>
